@@ -2,11 +2,12 @@ name: Test CI
 
 on:
   pull_request:
-    types: ["opened", "reopened"]
-    branches:
-      - main
     paths:
       - "terraform/eu-west-1/**"
+      - .github/workflows/plan.yml
+  push:
+    branches:
+      - main
 
 jobs:
   retrieve-tf-folder:
@@ -15,19 +16,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-      - name: Git diff
+
+      - name: Retrieve change files
+        id: changed-files-yaml
+        uses: tj-actions/changed-files@v45
+        with:
+          files_yaml: |
+            terraform:
+              - '**.tf'
+              - '**.tfvars'
+
+            all:
+              - '.terraform-version'
+              - .github/**
+      - name: Make matrix
         id: check-tf-changes
         run: |
-          git branch -l 
-          git diff main...${{ github.head_ref }} --name-only | xargs dirname | sort -u |  jq -ncR "[inputs]"  
-          echo "TF_FOLDERS=$(git diff main...${{ github.head_ref }} --name-only | xargs dirname | sort -u |  jq -ncR "[inputs]")" >> "$GITHUB_OUTPUT"
+          echo "TF_FOLDERS=$(echo "${{ steps.changed-files-yaml.outputs.terraform_all_changed_files}}" | xargs dirname | sort -u |  jq -ncR "[inputs]")" | tee -a "$GITHUB_OUTPUT"
 
     outputs:
       tf_folders: ${{ steps.check-tf-changes.outputs.TF_FOLDERS}}
 
   test-github-action:
     runs-on: ubuntu-latest
+    needs:
+      - retrieve-tf-folder
     strategy:
       matrix:
         env: ["dev", "qa", "prod"]
@@ -47,3 +62,6 @@ jobs:
           echo "github events"
           echo ${{ github.event_name }}
       - run: echo "🍏 This job's status is ${{ job.status }}."
+
+
+      #${{ github.event_name != "pull_request" && 'apply' || (startsWith(github.head_ref, 'renovate/') && 'drift' || 'plans' ) }}
